@@ -6,53 +6,70 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"log"
+	"os"
 )
 
 var BadFormatError = errors.New("bad format")
+var logger = log.New(os.Stderr, "tarhelper ", log.LstdFlags|log.Lshortfile)
 
-// Make reads cdb-formatted records from r and writes a cdb-format database
-// to w.  See the documentation for Dump for details on the input record format. 
-func Make(w io.WriteSeeker, r io.Reader) (err error) {
+type Element struct {
+	Key []byte
+	Data []byte
+}
+
+func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 	defer func() { // Centralize error handling.
 		if e := recover(); e != nil {
-			err = e.(error)
+			logger.Panicf("error: %s", e)
+			d <- e.(error)
 		}
 	}()
 
-	if _, err = w.Seek(int64(headerSize), 0); err != nil {
-		return
-	}
+	var (
+		n int
+		err error
+		elt Element
+		klen, dlen uint32
+		)
 
+	if _, err = w.Seek(int64(headerSize), 0); err != nil {
+		logger.Panicf("cannot seek to %d of %s: %s", headerSize, w, err)
+	}
 	buf := make([]byte, 8)
-	rb := bufio.NewReader(r)
 	wb := bufio.NewWriter(w)
 	hash := cdbHash()
 	hw := io.MultiWriter(hash, wb) // Computes hash when writing record key.
-	rr := &recReader{rb}
 	htables := make(map[uint32][]slot)
 	pos := headerSize
 	// Read all records and write to output.
 	for {
-		// Record format is "+klen,dlen:key->data\n"
-		c := rr.readByte()
-		if c == '\n' { // end of records
+		elt = <-c
+		// logger.Printf("recv: %+s", elt)
+		if elt.Key == nil || len(elt.Key) == 0 { // end of records
 			break
 		}
-		if c != '+' {
-			return BadFormatError
-		}
-		klen, dlen := rr.readNum(','), rr.readNum(':')
+		klen, dlen = uint32(len(elt.Key)), uint32(len(elt.Data))
 		writeNums(wb, klen, dlen, buf)
 		hash.Reset()
-		rr.copyn(hw, klen)
-		rr.eatByte('-')
-		rr.eatByte('>')
-		rr.copyn(wb, dlen)
-		rr.eatByte('\n')
+		if n, err = hw.Write(elt.Key); err == nil && uint32(n) != klen {
+			logger.Printf("klen=%d written=%d", klen, n)
+		} else if err != nil {
+			logger.Panicf("error writing key %s: %s", elt.Key, err)
+		}
+		if n, err = wb.Write(elt.Data); err == nil && uint32(n) != dlen {
+			logger.Printf("dlen=%d written=%d", dlen, n)
+		} else if err != nil {
+			logger.Panicf("error writing data: %s", err)
+		}
 		h := hash.Sum32()
 		tableNum := h % 256
 		htables[tableNum] = append(htables[tableNum], slot{h, pos})
 		pos += 8 + klen + dlen
+	}
+	wb.Flush()
+	if p, err := w.Seek(0, 1); err != nil || int64(pos) != p {
+		logger.Panicf("pos=%d p=%d: %s", pos, p, err)
 	}
 
 	// Write hash tables and header.
@@ -95,7 +112,7 @@ func Make(w io.WriteSeeker, r io.Reader) (err error) {
 		}
 
 		if err = writeSlots(wb, hashSlotTable, buf); err != nil {
-			return
+			logger.Panicf("cannot write slots: %s", err)
 		}
 
 		putNum(header[i*8:], pos)
@@ -104,14 +121,54 @@ func Make(w io.WriteSeeker, r io.Reader) (err error) {
 	}
 
 	if err = wb.Flush(); err != nil {
-		return
+		logger.Panicf("error flushing %s: %s", wb, err)
 	}
 
 	if _, err = w.Seek(0, 0); err != nil {
-		return
+		logger.Panicf("error seeking to begin of %s: %s", w, err)
 	}
 
 	_, err = w.Write(header)
+	p, _ := w.Seek(0, 1); logger.Printf("pos: %d", p)
+
+	d <- err
+}
+
+// Make reads cdb-formatted records from r and writes a cdb-format database
+// to w.  See the documentation for Dump for details on the input record format.
+func MakeFromReader(w io.WriteSeeker, r io.Reader) (err error) {
+	defer func() { // Centralize error handling.
+		if e := recover(); e != nil {
+			err = e.(error)
+		}
+	}()
+
+	rb := bufio.NewReader(r)
+	rr := &recReader{rb}
+	c := make(chan Element, 1)
+	d := make(chan error)
+
+	go MakeFromChan(w, c, d)
+	// Read all records and write to output.
+	for {
+		// Record format is "+klen,dlen:key->data\n"
+		x := rr.readByte()
+		if x == '\n' { // end of records
+			break
+		}
+		if x != '+' {
+			return BadFormatError
+		}
+		klen, dlen := rr.readNum(','), rr.readNum(':')
+		key := rr.readBytesN(klen)
+		rr.eatByte('-')
+		rr.eatByte('>')
+		data := rr.readBytesN(dlen)
+		rr.eatByte('\n')
+		c <- Element{key, data}
+	}
+	c <- Element{nil, nil}
+	err = <-d
 
 	return
 }
@@ -127,6 +184,14 @@ func (rr *recReader) readByte() byte {
 	}
 
 	return c
+}
+
+func (rr *recReader) readBytesN(n uint32) []byte {
+	buf := make([]byte, n)
+	for i := uint32(0); i < n; i++ {
+		buf[i] = rr.readByte()
+	}
+	return buf
 }
 
 func (rr *recReader) eatByte(c byte) {
