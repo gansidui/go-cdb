@@ -18,9 +18,12 @@ func Dump(w io.Writer, r io.Reader) (err error) {
 		}
 	}()
 
+	c := make(chan Element, 1)
+	go DumpToChan(c, r)
+	rw := &recWriter{bufio.NewWriter(w)}
+	/*
 	rb := bufio.NewReader(r)
 	readNum := makeNumReader(rb)
-	rw := &recWriter{bufio.NewWriter(w)}
 
 	eod := readNum()
 	// Read rest of header.
@@ -37,6 +40,16 @@ func Dump(w io.Writer, r io.Reader) (err error) {
 		rw.copyn(rb, dlen)
 		rw.writeString("\n")
 		pos += 8 + klen + dlen
+	}
+	*/
+	for {
+		elt, ok := <-c
+		//logger.Printf("elt=%+v ok=%+v", elt, ok)
+		if !ok {
+			break
+		}
+		rw.writeString(fmt.Sprintf("+%d,%d:%s->%s\n",
+			len(elt.Key), len(elt.Data), elt.Key, elt.Data))
 	}
 	rw.writeString("\n")
 
@@ -67,4 +80,34 @@ func (rw *recWriter) copyn(r io.Reader, n uint32) {
 	if _, err := io.CopyN(rw, r, int64(n)); err != nil {
 		panic(err)
 	}
+}
+
+func DumpToChan(c chan<- Element, r io.Reader) {
+	rb := bufio.NewReader(r)
+	readNum := makeNumReader(rb)
+
+	eod := readNum()
+	// Read rest of header.
+	for i := 0; i < 511; i++ {
+		readNum()
+	}
+
+	pos := headerSize
+	//logger.Printf("pos=%d eod=%d", pos, eod)
+	for pos < eod {
+		klen, dlen := readNum(), readNum()
+		//logger.Printf("klen=%d dlen=%d pos=%d eod=%d", klen, dlen, pos, eod)
+		c <- Element{readn(rb, klen), readn(rb, dlen)}
+		pos += 8 + klen + dlen
+	}
+	close(c)
+}
+
+func readn(r io.Reader, n uint32) []byte {
+	b := make([]byte, n)
+	_, err := io.ReadFull(r, b)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
