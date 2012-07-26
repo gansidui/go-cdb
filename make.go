@@ -8,10 +8,11 @@ import (
 	"strconv"
 	"log"
 	"os"
+	"path/filepath"
 )
 
 var BadFormatError = errors.New("bad format")
-var logger = log.New(os.Stderr, "tarhelper ", log.LstdFlags|log.Lshortfile)
+var logger = log.New(os.Stderr, "cdb ", log.LstdFlags|log.Lshortfile)
 
 type Element struct {
 	Key []byte
@@ -129,14 +130,14 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 	}
 
 	_, err = w.Write(header)
-	p, _ := w.Seek(0, 1); logger.Printf("pos: %d", p)
+	//p, _ := w.Seek(0, 1); logger.Printf("pos: %d", p)
 
 	d <- err
 }
 
 // Make reads cdb-formatted records from r and writes a cdb-format database
 // to w.  See the documentation for Dump for details on the input record format.
-func MakeFromReader(w io.WriteSeeker, r io.Reader) (err error) {
+func Make(w io.WriteSeeker, r io.Reader) (err error) {
 	defer func() { // Centralize error handling.
 		if e := recover(); e != nil {
 			err = e.(error)
@@ -247,4 +248,43 @@ func writeSlots(w io.Writer, slots []slot, buf []byte) (err error) {
 	}
 
 	return nil
+}
+
+type CdbWriter struct {
+	w chan Element
+	e chan error
+	tempfh *os.File
+	tempfn string
+	Filename string
+}
+
+func NewCdbWriter(cdb_fn string) (*CdbWriter, error) {
+	var cw CdbWriter
+	var err error
+	dir, ofn := filepath.Split(cdb_fn)
+	cw.tempfn = dir + "." + ofn
+	cw.tempfh, err = os.OpenFile(cw.tempfn, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0640)
+	if err != nil {
+		return nil, err
+	}
+	cw.w = make(chan Element, 1)
+	cw.e = make(chan error, 0)
+	cw.Filename = cdb_fn
+	go MakeFromChan(cw.tempfh, cw.w, cw.e)
+	return &cw, nil
+}
+
+func (cw *CdbWriter) Put(key []byte, val []byte) {
+	cw.w <- Element{key, val}
+}
+
+func (cw *CdbWriter) Close() error {
+	cw.w <- Element{}
+	close(cw.w)
+	cw.tempfh.Close()
+	err, _ := <-cw.e
+	if err != nil {
+		return err
+	}
+	return os.Rename(cw.tempfn, cw.Filename)
 }
