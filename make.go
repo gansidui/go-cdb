@@ -274,8 +274,11 @@ func NewWriter(cdb_fn string) (*CdbWriter, error) {
 	return &cw, nil
 }
 
-func (cw *CdbWriter) Put(key []byte, val []byte) {
+func (cw *CdbWriter) PutPair(key []byte, val []byte) {
 	cw.w <- Element{key, val}
+}
+func (cw *CdbWriter) Put(elt Element) {
+	cw.w <- elt
 }
 
 func (cw *CdbWriter) Close() error {
