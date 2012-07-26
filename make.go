@@ -258,7 +258,7 @@ type CdbWriter struct {
 	Filename string
 }
 
-func NewCdbWriter(cdb_fn string) (*CdbWriter, error) {
+func NewWriter(cdb_fn string) (*CdbWriter, error) {
 	var cw CdbWriter
 	var err error
 	dir, ofn := filepath.Split(cdb_fn)
