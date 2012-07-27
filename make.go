@@ -68,10 +68,12 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 		htables[tableNum] = append(htables[tableNum], slot{h, pos})
 		pos += 8 + klen + dlen
 	}
-	wb.Flush()
-	if p, err := w.Seek(0, 1); err != nil || int64(pos) != p {
-		logger.Panicf("pos=%d p=%d: %s", pos, p, err)
+	if err = wb.Flush(); err != nil {
+		logger.Panicf("cannot flush %+v: %s", wb, err)
 	}
+	//if p, err := w.Seek(0, 1); err != nil || int64(pos) != p {
+	//	logger.Panicf("Thought I've written pos=%d bytes, but the actual position is %d! (error? %s)", pos, p, err)
+	//}
 
 	// Write hash tables and header.
 
@@ -129,8 +131,9 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 		logger.Panicf("error seeking to begin of %s: %s", w, err)
 	}
 
-	_, err = w.Write(header)
-	//p, _ := w.Seek(0, 1); logger.Printf("pos: %d", p)
+	if _, err = w.Write(header); err != nil {
+		logger.Panicf("cannot write header: %s", err)
+	}
 
 	d <- err
 }
@@ -267,11 +270,11 @@ func NewWriter(cdb_fn string) (*CdbWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := cw.tempfh.Seek(int64(2048), 0)
+	_, err = cw.tempfh.Seek(int64(2048), 0)
 	if err != nil {
 		logger.Panicf("cannot seek to %d of %s: %s", 2048, cw.tempfh, err)
 	}
-	logger.Printf("COULD seek to %d", n)
+	//logger.Printf("COULD seek to %d of %s", n, cw.tempfh)
 	cw.w = make(chan Element, 1)
 	cw.e = make(chan error, 0)
 	cw.Filename = cdb_fn
@@ -288,11 +291,11 @@ func (cw *CdbWriter) Put(elt Element) {
 
 func (cw *CdbWriter) Close() error {
 	cw.w <- Element{}
-	close(cw.w)
-	cw.tempfh.Close()
 	err, _ := <-cw.e
 	if err != nil {
 		return err
 	}
+	close(cw.w)
+	cw.tempfh.Close()
 	return os.Rename(cw.tempfn, cw.Filename)
 }
