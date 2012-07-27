@@ -18,7 +18,7 @@ func Dump(w io.Writer, r io.Reader) (err error) {
 		}
 	}()
 
-	c := make(chan Element, 1)
+	c := make(chan Element, 0)
 	go DumpToChan(c, r)
 	rw := &recWriter{bufio.NewWriter(w)}
 	/*
@@ -44,7 +44,7 @@ func Dump(w io.Writer, r io.Reader) (err error) {
 	*/
 	for {
 		elt, ok := <-c
-		//logger.Printf("elt=%+v ok=%+v", elt, ok)
+		//logger.Printf("elt=%s ok=%+v", elt, ok)
 		if !ok {
 			break
 		}
@@ -57,13 +57,22 @@ func Dump(w io.Writer, r io.Reader) (err error) {
 }
 
 func makeNumReader(r io.Reader) func() uint32 {
-	buf := make([]byte, 4)
 	return func() uint32 {
-		if _, err := r.Read(buf); err != nil {
-			panic(err)
-		}
-		return binary.LittleEndian.Uint32(buf)
+		return binary.LittleEndian.Uint32(readn(r, 4))
 	}
+}
+
+func readn(r io.Reader, n uint32) []byte {
+	buf := make([]byte, n)
+	length, err := io.ReadFull(r, buf)
+	if err != nil {
+		panic(err)
+	}
+	//logger.Printf("read %d: %s", length, buf)
+	if uint32(length) != n {
+		logger.Panicf("wanted to read %d, got %d from %s", n, length, r)
+	}
+	return buf
 }
 
 type recWriter struct {
@@ -103,11 +112,3 @@ func DumpToChan(c chan<- Element, r io.Reader) {
 	close(c)
 }
 
-func readn(r io.Reader, n uint32) []byte {
-	b := make([]byte, n)
-	_, err := io.ReadFull(r, b)
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
