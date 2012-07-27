@@ -22,25 +22,25 @@ func Dump(w io.Writer, r io.Reader) (err error) {
 	go DumpToChan(c, r)
 	rw := &recWriter{bufio.NewWriter(w)}
 	/*
-	rb := bufio.NewReader(r)
-	readNum := makeNumReader(rb)
+		rb := bufio.NewReader(r)
+		readNum := makeNumReader(rb)
 
-	eod := readNum()
-	// Read rest of header.
-	for i := 0; i < 511; i++ {
-		readNum()
-	}
+		eod := readNum()
+		// Read rest of header.
+		for i := 0; i < 511; i++ {
+			readNum()
+		}
 
-	pos := headerSize
-	for pos < eod {
-		klen, dlen := readNum(), readNum()
-		rw.writeString(fmt.Sprintf("+%d,%d:", klen, dlen))
-		rw.copyn(rb, klen)
-		rw.writeString("->")
-		rw.copyn(rb, dlen)
-		rw.writeString("\n")
-		pos += 8 + klen + dlen
-	}
+		pos := headerSize
+		for pos < eod {
+			klen, dlen := readNum(), readNum()
+			rw.writeString(fmt.Sprintf("+%d,%d:", klen, dlen))
+			rw.copyn(rb, klen)
+			rw.writeString("->")
+			rw.copyn(rb, dlen)
+			rw.writeString("\n")
+			pos += 8 + klen + dlen
+		}
 	*/
 	for {
 		elt, ok := <-c

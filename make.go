@@ -5,17 +5,17 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"strconv"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 var BadFormatError = errors.New("bad format")
 var logger = log.New(os.Stderr, "cdb ", log.LstdFlags|log.Lshortfile)
 
 type Element struct {
-	Key []byte
+	Key  []byte
 	Data []byte
 }
 
@@ -28,11 +28,11 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 	}()
 
 	var (
-		n int
-		err error
-		elt Element
+		n          int
+		err        error
+		elt        Element
 		klen, dlen uint32
-		)
+	)
 
 	if _, err = w.Seek(int64(headerSize), 0); err != nil {
 		logger.Panicf("cannot seek to %d of %s: %s", headerSize, w, err)
@@ -251,10 +251,10 @@ func writeSlots(w io.Writer, slots []slot, buf []byte) (err error) {
 }
 
 type CdbWriter struct {
-	w chan Element
-	e chan error
-	tempfh *os.File
-	tempfn string
+	w        chan Element
+	e        chan error
+	tempfh   *os.File
+	tempfn   string
 	Filename string
 }
 
@@ -263,10 +263,15 @@ func NewWriter(cdb_fn string) (*CdbWriter, error) {
 	var err error
 	dir, ofn := filepath.Split(cdb_fn)
 	cw.tempfn = dir + "." + ofn
-	cw.tempfh, err = os.OpenFile(cw.tempfn, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0640)
+	cw.tempfh, err = os.OpenFile(cw.tempfn, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0640)
 	if err != nil {
 		return nil, err
 	}
+	n, err := cw.tempfh.Seek(int64(2048), 0)
+	if err != nil {
+		logger.Panicf("cannot seek to %d of %s: %s", 2048, cw.tempfh, err)
+	}
+	logger.Printf("COULD seek to %d", n)
 	cw.w = make(chan Element, 1)
 	cw.e = make(chan error, 0)
 	cw.Filename = cdb_fn
