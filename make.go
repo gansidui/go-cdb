@@ -30,7 +30,6 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 	var (
 		n          int
 		err        error
-		elt        Element
 		klen, dlen uint32
 	)
 
@@ -45,9 +44,8 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 	pos := headerSize
 	// Read all records and write to output.
 	for {
-		elt = <-c
-		// logger.Printf("recv: %+s", elt)
-		if elt.Key == nil || len(elt.Key) == 0 { // end of records
+		elt, ok := <-c
+		if !ok {
 			break
 		}
 		klen, dlen = uint32(len(elt.Key)), uint32(len(elt.Data))
@@ -171,7 +169,7 @@ func Make(w io.WriteSeeker, r io.Reader) (err error) {
 		rr.eatByte('\n')
 		c <- Element{key, data}
 	}
-	c <- Element{nil, nil}
+	close(c)
 	err = <-d
 
 	return
@@ -276,13 +274,14 @@ func NewWriter(cdb_fn string) (*CdbWriter, error) {
 	}
 	//logger.Printf("COULD seek to %d of %s", n, cw.tempfh)
 	cw.w = make(chan Element, 1)
-	cw.e = make(chan error, 0)
+	cw.e = make(chan error, 1)
 	cw.Filename = cdb_fn
 	go MakeFromChan(cw.tempfh, cw.w, cw.e)
 	return &cw, nil
 }
 
 func (cw *CdbWriter) PutPair(key []byte, val []byte) {
+	//logger.Printf("PutPair(%s)", key)
 	cw.w <- Element{key, val}
 }
 func (cw *CdbWriter) Put(elt Element) {
@@ -290,12 +289,13 @@ func (cw *CdbWriter) Put(elt Element) {
 }
 
 func (cw *CdbWriter) Close() error {
-	cw.w <- Element{}
+	//logger.Printf("closing %s", cw.w)
+	close(cw.w)
+	//logger.Printf("waiting for %s", cw.e)
 	err, _ := <-cw.e
 	if err != nil {
 		return err
 	}
-	close(cw.w)
 	cw.tempfh.Close()
 	return os.Rename(cw.tempfn, cw.Filename)
 }
