@@ -44,7 +44,7 @@ func Open(name string) (*Cdb, error) {
 
 // Close closes the cdb for any further reads.
 func (c *Cdb) Close() (err error) {
-	if c.closer != nil {
+	if c != nil && c.closer != nil {
 		err = c.closer.Close()
 		c.closer = nil
 		runtime.SetFinalizer(c, nil)
