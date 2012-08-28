@@ -19,19 +19,44 @@ type Element struct {
 	Data []byte
 }
 
+//MakeFromChan makes CDB reading elements from the channel, signaling back errors
 func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
+	adder, closer, err := MakeFactory(w)
+	if err != nil {
+		logger.Printf("cannot create factory: %s", err)
+		d <- err
+		return
+	}
+	for elt := range c {
+		if err = adder(elt); err != nil {
+			logger.Printf("error adding %s: %s", elt, err)
+			d <- err
+			return
+		}
+	}
+	if err = closer(); err != nil {
+		logger.Printf("error closing cdb: %s", err)
+		d <- err
+	}
+	close(d)
+}
+
+type adderFunc func(Element) error
+type closerFunc func() error
+
+type posHolder struct {
+	pos uint32
+}
+
+//MakeFactory creates CDB and returns an adder function which should be called
+//with each Element, and a closer, which finalizes the CDB.
+func MakeFactory(w io.WriteSeeker) (adder adderFunc, closer closerFunc, err error) {
 	defer func() { // Centralize error handling.
 		if e := recover(); e != nil {
 			logger.Panicf("error: %s", e)
-			d <- e.(error)
+			err = e.(error)
 		}
 	}()
-
-	var (
-		n          int
-		err        error
-		klen, dlen uint32
-	)
 
 	if _, err = w.Seek(int64(headerSize), 0); err != nil {
 		logger.Panicf("cannot seek to %d of %s: %s", headerSize, w, err)
@@ -41,13 +66,15 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 	hash := cdbHash()
 	hw := io.MultiWriter(hash, wb) // Computes hash when writing record key.
 	htables := make(map[uint32][]slot)
-	pos := headerSize
+	poshold := &posHolder{headerSize}
+
 	// Read all records and write to output.
-	for {
-		elt, ok := <-c
-		if !ok {
-			break
-		}
+	adder = func(elt Element) error {
+		var (
+			err error
+		    klen, dlen uint32
+			n          int
+		)
 		klen, dlen = uint32(len(elt.Key)), uint32(len(elt.Data))
 		writeNums(wb, klen, dlen, buf)
 		hash.Reset()
@@ -55,19 +82,26 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 			logger.Printf("klen=%d written=%d", klen, n)
 		} else if err != nil {
 			logger.Panicf("error writing key %s: %s", elt.Key, err)
+			return err
 		}
 		if n, err = wb.Write(elt.Data); err == nil && uint32(n) != dlen {
 			logger.Printf("dlen=%d written=%d", dlen, n)
 		} else if err != nil {
 			logger.Panicf("error writing data: %s", err)
+			return err
 		}
 		h := hash.Sum32()
 		tableNum := h % 256
-		htables[tableNum] = append(htables[tableNum], slot{h, pos})
-		pos += 8 + klen + dlen
+		htables[tableNum] = append(htables[tableNum], slot{h, poshold.pos})
+		poshold.pos += 8 + klen + dlen
+		return nil
 	}
+
+	closer = func() error {
+		var err error
 	if err = wb.Flush(); err != nil {
 		logger.Panicf("cannot flush %+v: %s", wb, err)
+		return err
 	}
 	//if p, err := w.Seek(0, 1); err != nil || int64(pos) != p {
 	//	logger.Panicf("Thought I've written pos=%d bytes, but the actual position is %d! (error? %s)", pos, p, err)
@@ -76,6 +110,7 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 	// Write hash tables and header.
 
 	// Create and reuse a single hash table.
+	pos := poshold.pos
 	maxSlots := 0
 	for _, slots := range htables {
 		if len(slots) > maxSlots {
@@ -132,8 +167,10 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
 	if _, err = w.Write(header); err != nil {
 		logger.Panicf("cannot write header: %s", err)
 	}
+	return err
+	}
 
-	d <- err
+	return adder, closer, nil
 }
 
 // Make reads cdb-formatted records from r and writes a cdb-format database
@@ -147,10 +184,11 @@ func Make(w io.WriteSeeker, r io.Reader) (err error) {
 
 	rb := bufio.NewReader(r)
 	rr := &recReader{rb}
-	c := make(chan Element, 1)
-	d := make(chan error)
 
-	go MakeFromChan(w, c, d)
+	adder, closer, err := MakeFactory(w)
+	if err != nil {
+		logger.Panicf("cannot create factory: %s", err)
+	}
 	// Read all records and write to output.
 	for {
 		// Record format is "+klen,dlen:key->data\n"
@@ -167,12 +205,11 @@ func Make(w io.WriteSeeker, r io.Reader) (err error) {
 		rr.eatByte('>')
 		data := rr.readBytesN(dlen)
 		rr.eatByte('\n')
-		c <- Element{key, data}
+		adder(Element{key, data})
 	}
-	close(c)
-	err = <-d
+	closer()
 
-	return
+	return err
 }
 
 type recReader struct {
