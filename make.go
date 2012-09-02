@@ -71,8 +71,8 @@ func MakeFactory(w io.WriteSeeker) (adder adderFunc, closer closerFunc, err erro
 	// Read all records and write to output.
 	adder = func(elt Element) error {
 		var (
-			err error
-		    klen, dlen uint32
+			err        error
+			klen, dlen uint32
 			n          int
 		)
 		klen, dlen = uint32(len(elt.Key)), uint32(len(elt.Data))
@@ -99,75 +99,75 @@ func MakeFactory(w io.WriteSeeker) (adder adderFunc, closer closerFunc, err erro
 
 	closer = func() error {
 		var err error
-	if err = wb.Flush(); err != nil {
-		logger.Panicf("cannot flush %+v: %s", wb, err)
-		return err
-	}
-	//if p, err := w.Seek(0, 1); err != nil || int64(pos) != p {
-	//	logger.Panicf("Thought I've written pos=%d bytes, but the actual position is %d! (error? %s)", pos, p, err)
-	//}
-
-	// Write hash tables and header.
-
-	// Create and reuse a single hash table.
-	pos := poshold.pos
-	maxSlots := 0
-	for _, slots := range htables {
-		if len(slots) > maxSlots {
-			maxSlots = len(slots)
+		if err = wb.Flush(); err != nil {
+			logger.Panicf("cannot flush %+v: %s", wb, err)
+			return err
 		}
-	}
-	slotTable := make([]slot, maxSlots*2)
+		//if p, err := w.Seek(0, 1); err != nil || int64(pos) != p {
+		//	logger.Panicf("Thought I've written pos=%d bytes, but the actual position is %d! (error? %s)", pos, p, err)
+		//}
 
-	header := make([]byte, headerSize)
-	// Write hash tables.
-	for i := uint32(0); i < 256; i++ {
-		slots := htables[i]
-		if slots == nil {
-			putNum(header[i*8:], pos)
-			continue
-		}
+		// Write hash tables and header.
 
-		nslots := uint32(len(slots) * 2)
-		hashSlotTable := slotTable[:nslots]
-		// Reset table slots.
-		for j := 0; j < len(hashSlotTable); j++ {
-			hashSlotTable[j].h = 0
-			hashSlotTable[j].pos = 0
-		}
-
-		for _, slot := range slots {
-			slotPos := (slot.h / 256) % nslots
-			for hashSlotTable[slotPos].pos != 0 {
-				slotPos++
-				if slotPos == uint32(len(hashSlotTable)) {
-					slotPos = 0
-				}
+		// Create and reuse a single hash table.
+		pos := poshold.pos
+		maxSlots := 0
+		for _, slots := range htables {
+			if len(slots) > maxSlots {
+				maxSlots = len(slots)
 			}
-			hashSlotTable[slotPos] = slot
+		}
+		slotTable := make([]slot, maxSlots*2)
+
+		header := make([]byte, headerSize)
+		// Write hash tables.
+		for i := uint32(0); i < 256; i++ {
+			slots := htables[i]
+			if slots == nil {
+				putNum(header[i*8:], pos)
+				continue
+			}
+
+			nslots := uint32(len(slots) * 2)
+			hashSlotTable := slotTable[:nslots]
+			// Reset table slots.
+			for j := 0; j < len(hashSlotTable); j++ {
+				hashSlotTable[j].h = 0
+				hashSlotTable[j].pos = 0
+			}
+
+			for _, slot := range slots {
+				slotPos := (slot.h / 256) % nslots
+				for hashSlotTable[slotPos].pos != 0 {
+					slotPos++
+					if slotPos == uint32(len(hashSlotTable)) {
+						slotPos = 0
+					}
+				}
+				hashSlotTable[slotPos] = slot
+			}
+
+			if err = writeSlots(wb, hashSlotTable, buf); err != nil {
+				logger.Panicf("cannot write slots: %s", err)
+			}
+
+			putNum(header[i*8:], pos)
+			putNum(header[i*8+4:], nslots)
+			pos += 8 * nslots
 		}
 
-		if err = writeSlots(wb, hashSlotTable, buf); err != nil {
-			logger.Panicf("cannot write slots: %s", err)
+		if err = wb.Flush(); err != nil {
+			logger.Panicf("error flushing %s: %s", wb, err)
 		}
 
-		putNum(header[i*8:], pos)
-		putNum(header[i*8+4:], nslots)
-		pos += 8 * nslots
-	}
+		if _, err = w.Seek(0, 0); err != nil {
+			logger.Panicf("error seeking to begin of %s: %s", w, err)
+		}
 
-	if err = wb.Flush(); err != nil {
-		logger.Panicf("error flushing %s: %s", wb, err)
-	}
-
-	if _, err = w.Seek(0, 0); err != nil {
-		logger.Panicf("error seeking to begin of %s: %s", w, err)
-	}
-
-	if _, err = w.Write(header); err != nil {
-		logger.Panicf("cannot write header: %s", err)
-	}
-	return err
+		if _, err = w.Write(header); err != nil {
+			logger.Panicf("cannot write header: %s", err)
+		}
+		return err
 	}
 
 	return adder, closer, nil

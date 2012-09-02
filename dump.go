@@ -18,42 +18,49 @@ func Dump(w io.Writer, r io.Reader) (err error) {
 		}
 	}()
 
-	c := make(chan Element, 0)
-	go DumpToChan(c, r)
 	rw := &recWriter{bufio.NewWriter(w)}
-	/*
-		rb := bufio.NewReader(r)
-		readNum := makeNumReader(rb)
-
-		eod := readNum()
-		// Read rest of header.
-		for i := 0; i < 511; i++ {
-			readNum()
-		}
-
-		pos := headerSize
-		for pos < eod {
-			klen, dlen := readNum(), readNum()
-			rw.writeString(fmt.Sprintf("+%d,%d:", klen, dlen))
-			rw.copyn(rb, klen)
-			rw.writeString("->")
-			rw.copyn(rb, dlen)
-			rw.writeString("\n")
-			pos += 8 + klen + dlen
-		}
-	*/
-	for {
-		elt, ok := <-c
-		//logger.Printf("elt=%s ok=%+v", elt, ok)
-		if !ok {
-			break
-		}
+	err = DumpMap(r, func(elt Element) error {
 		rw.writeString(fmt.Sprintf("+%d,%d:%s->%s\n",
 			len(elt.Key), len(elt.Data), elt.Key, elt.Data))
-	}
+		return nil
+	})
 	rw.writeString("\n")
+	err2 := rw.Flush()
+	if err != nil {
+		return err
+	}
+	return err2
+}
 
-	return rw.Flush()
+// calls work function for every element in the CDB
+// if the function returns error, then quits with that error
+func DumpMap(r io.Reader, work func(Element) error) error {
+	rb := bufio.NewReader(r)
+	readNum := makeNumReader(rb)
+
+	eod := readNum()
+	// Read rest of header.
+	for i := 0; i < 511; i++ {
+		readNum()
+	}
+
+	pos := headerSize
+	//logger.Printf("pos=%d eod=%d", pos, eod)
+	for pos < eod {
+		klen, dlen := readNum(), readNum()
+		//logger.Printf("klen=%d dlen=%d pos=%d eod=%d", klen, dlen, pos, eod)
+		if err := work(Element{readn(rb, klen), readn(rb, dlen)}); err != nil {
+			return err
+		}
+		pos += 8 + klen + dlen
+	}
+	return nil
+}
+
+// dumps elements into the given channel
+func DumpToChan(c chan<- Element, r io.Reader) {
+	DumpMap(r, func(elt Element) error { c <- elt; return nil })
+	close(c)
 }
 
 func makeNumReader(r io.Reader) func() uint32 {
@@ -90,25 +97,3 @@ func (rw *recWriter) copyn(r io.Reader, n uint32) {
 		panic(err)
 	}
 }
-
-func DumpToChan(c chan<- Element, r io.Reader) {
-	rb := bufio.NewReader(r)
-	readNum := makeNumReader(rb)
-
-	eod := readNum()
-	// Read rest of header.
-	for i := 0; i < 511; i++ {
-		readNum()
-	}
-
-	pos := headerSize
-	//logger.Printf("pos=%d eod=%d", pos, eod)
-	for pos < eod {
-		klen, dlen := readNum(), readNum()
-		//logger.Printf("klen=%d dlen=%d pos=%d eod=%d", klen, dlen, pos, eod)
-		c <- Element{readn(rb, klen), readn(rb, dlen)}
-		pos += 8 + klen + dlen
-	}
-	close(c)
-}
-

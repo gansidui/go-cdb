@@ -14,11 +14,7 @@ type rec struct {
 	values []string
 }
 
-var records = []rec{
-	{"one", []string{"1"}},
-	{"two", []string{"2", "22"}},
-	{"three", []string{"3", "33", "333"}},
-}
+var records []rec
 
 var data []byte // set by init()
 
@@ -88,6 +84,7 @@ func TestCdb(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dump failed: %s", err)
 	}
+	// fmt.Printf("data=%s\ndumped=%s", data, buf.Bytes())
 
 	if !bytes.Equal(buf.Bytes(), data) {
 		t.Fatalf("Dump round-trip failed")
@@ -95,6 +92,26 @@ func TestCdb(t *testing.T) {
 }
 
 func init() {
+	names := map[int]string{1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"}
+	m := len(names)
+	loads := make(map[int][]string, m)
+	for i := 1; i < m+1; i++ {
+		load := make([]string, i)
+		for j := 0; j < i; j++ {
+			load[j] = fmt.Sprintf("%d", i)
+		}
+		loads[i] = load
+	}
+	// fmt.Printf("names=%s\n", names)
+	// fmt.Printf("loads=%s\n", loads)
+	n := m * 13000
+	// n := 13
+	records := make([]rec, n)
+	for i := 0; i < n; i++ {
+		j := (i % (m - 1)) + 1
+		records[i] = rec{fmt.Sprintf("%s-%d", names[j], i), loads[j]}
+	}
+	// fmt.Printf("records=%s\n", records)
 	b := bytes.NewBuffer(nil)
 	for _, rec := range records {
 		key := rec.key
