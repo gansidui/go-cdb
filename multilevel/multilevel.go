@@ -14,6 +14,59 @@ import (
 
 const MaxCdbSize = 1 << 30 //1Gb
 
+type Multi []*cdb.Cdb
+
+func Open(path string) (Multi, error) {
+	files, err := listDir(path, 0, isCdb)
+	if err != nil {
+		return nil, err
+	}
+	cdbs := make(Multi, 0, len(files))
+	for _, fn := range files {
+		ch, err := cdb.Open(fn)
+		if err != nil {
+			cdbs.Close()
+			return fmt.Errorf("error opening %s: %s", fn, err)
+		}
+	}
+	return cdbs, nil
+}
+
+func (m Multi) Close() {
+	for _, ch := range m {
+		if m != nil {
+			m.Close()
+		}
+	}
+}
+
+type result struct {
+	data []byte
+	err error
+}
+
+func (m Multi) Data(key []byte) ([]byte, error) {
+	results := make(chan result, 1)
+	getter := func(ch *cdb.Cdb) {
+		data, err := ch.Data(key)
+		results <- result{data, err}
+	}
+	for _, ch := range m {
+		go getter(ch)
+	}
+	for i := 0; i <len(m); i++ {
+		res := <-results
+		if res.err != io.EOF {
+			return res.data
+		}
+	}
+	return io.EOF
+}
+
+func isCdb(fi os.FileInfo) bool {
+		return strings.HasSuffix(fi.Name(), ".cdb")
+	}
+
 // compacts path directory, if number of cdb files greater than threshold
 func Compact(path string, threshold int) error {
 	if locks, err := locking.FLockDirs(path); err != nil {
@@ -21,9 +74,7 @@ func Compact(path string, threshold int) error {
 	} else {
 		defer locks.Unlock()
 	}
-	files, err := listDir(path, 'S', func(fi os.FileInfo) bool {
-		return strings.HasSuffix(fi.Name(), ".cdb")
-	})
+	files, err := listDir(path, 'S', isCdb)
 	if err != nil {
 		return fmt.Errorf("cannot list dir %s: %s", path, err)
 	}

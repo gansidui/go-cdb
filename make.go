@@ -11,7 +11,7 @@ import (
 	"strconv"
 )
 
-const MaxCdbSize = 1<<32 //maximum CDB size is 4Gb
+const MaxCdbSize = 1 << 32 //maximum CDB size is 4Gb
 
 var BadFormatError = errors.New("bad format")
 var logger = log.New(os.Stderr, "cdb ", log.LstdFlags|log.Lshortfile)
