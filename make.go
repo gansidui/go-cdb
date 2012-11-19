@@ -11,6 +11,8 @@ import (
 	"strconv"
 )
 
+const MaxCdbSize = 1<<32 //maximum CDB size is 4Gb
+
 var BadFormatError = errors.New("bad format")
 var logger = log.New(os.Stderr, "cdb ", log.LstdFlags|log.Lshortfile)
 
@@ -19,26 +21,24 @@ type Element struct {
 	Data []byte
 }
 
-//MakeFromChan makes CDB reading elements from the channel, signaling back errors
-func MakeFromChan(w io.WriteSeeker, c <-chan Element, d chan<- error) {
+//MakeFromChan makes CDB reading elements from the channel, does not close it!
+func MakeFromChan(w io.WriteSeeker, c <-chan Element) error {
 	adder, closer, err := MakeFactory(w)
 	if err != nil {
 		logger.Printf("cannot create factory: %s", err)
-		d <- err
-		return
+		return err
 	}
 	for elt := range c {
 		if err = adder(elt); err != nil {
 			logger.Printf("error adding %s: %s", elt, err)
-			d <- err
-			return
+			return err
 		}
 	}
 	if err = closer(); err != nil {
 		logger.Printf("error closing cdb: %s", err)
-		d <- err
+		return err
 	}
-	close(d)
+	return nil
 }
 
 type adderFunc func(Element) error
@@ -313,7 +313,9 @@ func NewWriter(cdb_fn string) (*CdbWriter, error) {
 	cw.w = make(chan Element, 1)
 	cw.e = make(chan error, 1)
 	cw.Filename = cdb_fn
-	go MakeFromChan(cw.tempfh, cw.w, cw.e)
+	go func() {
+		cw.e <- MakeFromChan(cw.tempfh, cw.w)
+	}()
 	return &cw, nil
 }
 

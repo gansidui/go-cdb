@@ -57,10 +57,9 @@ func DumpMap(r io.Reader, work func(Element) error) error {
 	return nil
 }
 
-// dumps elements into the given channel
-func DumpToChan(c chan<- Element, r io.Reader) {
-	DumpMap(r, func(elt Element) error { c <- elt; return nil })
-	close(c)
+// dumps elements into the given channel, does not close it!
+func DumpToChan(c chan<- Element, r io.Reader) error {
+	return DumpMap(r, func(elt Element) error { c <- elt; return nil })
 }
 
 func makeNumReader(r io.Reader) func() uint32 {
