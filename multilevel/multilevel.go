@@ -5,6 +5,7 @@ import (
 	"github.com/tgulacsi/go-cdb"
 	"github.com/tgulacsi/go-locking"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,52 +15,85 @@ import (
 
 const MaxCdbSize = 1 << 30 //1Gb
 
-type Multi []*cdb.Cdb
+// type for the opened cdbs
+type Multi [](chan Question)
+
+// the key to query for and the channel to answer on
+type Question struct {
+	Key    []byte
+	Answch chan Result
+}
+
+// an answer can be nice data or io.EOF if not found (or other error)
+type Result struct {
+	Data []byte
+	Err  error
+}
+
+var openedDirs = make(map[string]*Multi, 1)
 
 func Open(path string) (Multi, error) {
 	files, err := listDir(path, 0, isCdb)
 	if err != nil {
 		return nil, err
 	}
+	if old, ok := openedDirs[path]; ok {
+		log.Printf("reopening %s", path)
+		old.Close()
+		delete(openedDirs, path)
+	}
+	var askch chan Question
 	cdbs := make(Multi, 0, len(files))
 	for _, fi := range files {
 		fn := filepath.Join(path, fi.Name())
-		ch, err := cdb.Open(fn)
-		if err != nil {
-			cdbs.Close()
+		if askch, err = startOracle(fn); err != nil {
 			return nil, fmt.Errorf("error opening %s: %s", fn, err)
 		}
-		cdbs = append(cdbs, ch)
+		cdbs = append(cdbs, askch)
 	}
+	openedDirs[path] = &cdbs
 	return cdbs, nil
+}
+
+func startOracle(fn string) (chan Question, error) {
+	ch, err := cdb.Open(fn)
+	if err != nil {
+		return nil, fmt.Errorf("error opening %s: %s", fn, err)
+	}
+	defer ch.Close()
+	askch := make(chan Question, 1)
+	go func(askch <-chan Question) {
+		var data []byte
+		var err error
+		for qry := range askch {
+			data, err = ch.Data(qry.Key)
+			qry.Answch <- Result{Data: data, Err: err}
+		}
+	}(askch)
+	return askch, nil
 }
 
 func (m Multi) Close() {
 	for _, ch := range m {
 		if ch != nil {
-			ch.Close()
+			close(ch)
 		}
 	}
 }
 
-type result struct {
-	data []byte
-	err  error
-}
-
 func (m Multi) Data(key []byte) ([]byte, error) {
-	results := make(chan result, 1)
-	getter := func(ch *cdb.Cdb) {
-		data, err := ch.Data(key)
-		results <- result{data, err}
-	}
+	results := make(chan Result, 1)
+	qry := Question{Key: key, Answch: results}
 	for _, ch := range m {
-		go getter(ch)
+		ch <- qry
 	}
 	for i := 0; i < len(m); i++ {
 		res := <-results
-		if res.err != io.EOF {
-			return res.data, nil
+		if res.Err == nil {
+			return res.Data, nil
+		}
+		if res.Err != io.EOF {
+			return nil, res.Err
 		}
 	}
 	return nil, io.EOF
@@ -96,7 +130,16 @@ func Compact(path string, threshold int) error {
 		}
 		bucket = append(bucket, filepath.Join(path, fi.Name()))
 	}
-	return nil
+	err = nil
+	if len(bucket) > 1 {
+		if err = MergeCdbs(time.Now().Format(time.RFC3339), bucket...); err != nil {
+			return err
+		}
+	}
+	if _, ok := openedDirs[path]; ok {
+		_, err = Open(path)
+	}
+	return err
 }
 
 // merges the cdbs, dumping filenames to newfn
