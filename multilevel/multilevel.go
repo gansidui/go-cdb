@@ -22,27 +22,29 @@ func Open(path string) (Multi, error) {
 		return nil, err
 	}
 	cdbs := make(Multi, 0, len(files))
-	for _, fn := range files {
+	for _, fi := range files {
+		fn := filepath.Join(path, fi.Name())
 		ch, err := cdb.Open(fn)
 		if err != nil {
 			cdbs.Close()
-			return fmt.Errorf("error opening %s: %s", fn, err)
+			return nil, fmt.Errorf("error opening %s: %s", fn, err)
 		}
+		cdbs = append(cdbs, ch)
 	}
 	return cdbs, nil
 }
 
 func (m Multi) Close() {
 	for _, ch := range m {
-		if m != nil {
-			m.Close()
+		if ch != nil {
+			ch.Close()
 		}
 	}
 }
 
 type result struct {
 	data []byte
-	err error
+	err  error
 }
 
 func (m Multi) Data(key []byte) ([]byte, error) {
@@ -54,18 +56,18 @@ func (m Multi) Data(key []byte) ([]byte, error) {
 	for _, ch := range m {
 		go getter(ch)
 	}
-	for i := 0; i <len(m); i++ {
+	for i := 0; i < len(m); i++ {
 		res := <-results
 		if res.err != io.EOF {
-			return res.data
+			return res.data, nil
 		}
 	}
-	return io.EOF
+	return nil, io.EOF
 }
 
 func isCdb(fi os.FileInfo) bool {
-		return strings.HasSuffix(fi.Name(), ".cdb")
-	}
+	return strings.HasSuffix(fi.Name(), ".cdb")
+}
 
 // compacts path directory, if number of cdb files greater than threshold
 func Compact(path string, threshold int) error {
