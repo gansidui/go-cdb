@@ -6,9 +6,7 @@ import (
 	"github.com/tgulacsi/go-cdb"
 	"io"
 	"os"
-	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestCreateAndCompact(t *testing.T) {
@@ -29,6 +27,7 @@ func TestCreateAndCompact(t *testing.T) {
 	if err = Compact(path, 2); err != nil {
 		t.Fatalf("error while compacting %s: %s", path, err)
 	}
+	t.Logf("merge done successfully")
 	check(t, m, []byte{2}, []byte("b"))
 }
 
@@ -45,7 +44,7 @@ func check(t *testing.T, m *Multi, exists, notExists []byte) {
 }
 
 func createCdb(path string, from, to int) (string, error) {
-	fn := filepath.Join(path, time.Now().Format(time.RFC3339)+".cdb")
+	fn := newFn(path)
 	fh, err := os.Create(fn)
 	if err != nil {
 		return fn, err

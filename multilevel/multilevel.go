@@ -42,9 +42,9 @@ func Open(path string) (*Multi, error) {
 		return nil, err
 	}
 	if old, ok := openedDirs[path]; ok {
+		delete(openedDirs, path)
 		log.Printf("reopening %s", path)
 		old.Close()
-		delete(openedDirs, path)
 	}
 	var askch chan Question
 	cdbs := &Multi{channels: make([](chan Question), 0, len(files))}
@@ -69,36 +69,38 @@ func startOracle(fn string) (chan Question, error) {
 		defer ch.Close()
 		var data []byte
 		var err error
-		log.Printf("starting waiting for questions for %s", ch)
+		// log.Printf("starting waiting for questions for %s", askch)
 		for qry := range askch {
 			data, err = ch.Data(qry.Key)
 			qry.Answch <- Result{Data: data, Err: err}
 		}
-		log.Printf("closing %s", ch)
+		// log.Printf("closing %s", ch)
 	}(ch, askch)
 	return askch, nil
 }
 
-func (m Multi) Close() {
+func (m *Multi) Close() {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 	for _, ch := range m.channels {
 		if ch != nil {
+			// log.Printf("closing channel %s", ch)
 			close(ch)
 		}
 	}
 	m.channels = m.channels[:0]
 }
 
-func (m Multi) Data(key []byte) ([]byte, error) {
+func (m *Multi) Data(key []byte) ([]byte, error) {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
 	results := make(chan Result, 1)
 	qry := Question{Key: key, Answch: results}
-	m.mtx.Lock()
 	n := len(m.channels)
 	for _, ch := range m.channels {
+		// log.Printf("sending on %s", ch)
 		ch <- qry
 	}
-	m.mtx.Unlock()
 	for i := 0; i < n; i++ {
 		res := <-results
 		if res.Err == nil {
