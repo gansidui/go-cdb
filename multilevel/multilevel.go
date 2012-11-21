@@ -10,13 +10,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 const MaxCdbSize = 1 << 30 //1Gb
 
 // type for the opened cdbs
-type Multi [](chan Question)
+type Multi struct {
+	channels [](chan Question)
+	mtx      sync.Mutex
+}
 
 // the key to query for and the channel to answer on
 type Question struct {
@@ -32,7 +36,7 @@ type Result struct {
 
 var openedDirs = make(map[string]*Multi, 1)
 
-func Open(path string) (Multi, error) {
+func Open(path string) (*Multi, error) {
 	files, err := listDir(path, 0, isCdb)
 	if err != nil {
 		return nil, err
@@ -43,15 +47,15 @@ func Open(path string) (Multi, error) {
 		delete(openedDirs, path)
 	}
 	var askch chan Question
-	cdbs := make(Multi, 0, len(files))
+	cdbs := &Multi{channels: make([](chan Question), 0, len(files))}
 	for _, fi := range files {
 		fn := filepath.Join(path, fi.Name())
 		if askch, err = startOracle(fn); err != nil {
 			return nil, fmt.Errorf("error opening %s: %s", fn, err)
 		}
-		cdbs = append(cdbs, askch)
+		cdbs.channels = append(cdbs.channels, askch)
 	}
-	openedDirs[path] = &cdbs
+	openedDirs[path] = cdbs
 	return cdbs, nil
 }
 
@@ -60,34 +64,42 @@ func startOracle(fn string) (chan Question, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error opening %s: %s", fn, err)
 	}
-	defer ch.Close()
-	askch := make(chan Question, 1)
-	go func(askch <-chan Question) {
+	askch := make(chan Question)
+	go func(ch *cdb.Cdb, askch <-chan Question) {
+		defer ch.Close()
 		var data []byte
 		var err error
+		log.Printf("starting waiting for questions for %s", ch)
 		for qry := range askch {
 			data, err = ch.Data(qry.Key)
 			qry.Answch <- Result{Data: data, Err: err}
 		}
-	}(askch)
+		log.Printf("closing %s", ch)
+	}(ch, askch)
 	return askch, nil
 }
 
 func (m Multi) Close() {
-	for _, ch := range m {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+	for _, ch := range m.channels {
 		if ch != nil {
 			close(ch)
 		}
 	}
+	m.channels = m.channels[:0]
 }
 
 func (m Multi) Data(key []byte) ([]byte, error) {
 	results := make(chan Result, 1)
 	qry := Question{Key: key, Answch: results}
-	for _, ch := range m {
+	m.mtx.Lock()
+	n := len(m.channels)
+	for _, ch := range m.channels {
 		ch <- qry
 	}
-	for i := 0; i < len(m); i++ {
+	m.mtx.Unlock()
+	for i := 0; i < n; i++ {
 		res := <-results
 		if res.Err == nil {
 			return res.Data, nil
@@ -122,7 +134,7 @@ func Compact(path string, threshold int) error {
 	for _, fi := range files {
 		fs := fi.Size()
 		if fs+size > MaxCdbSize {
-			if err = MergeCdbs(time.Now().Format(time.RFC3339), bucket...); err != nil {
+			if err = MergeCdbs(newFn(path), bucket...); err != nil {
 				return fmt.Errorf("error merging cdbs (%s): %s", strings.Join(bucket, ", "), err)
 			}
 			size = 0
@@ -132,7 +144,7 @@ func Compact(path string, threshold int) error {
 	}
 	err = nil
 	if len(bucket) > 1 {
-		if err = MergeCdbs(time.Now().Format(time.RFC3339), bucket...); err != nil {
+		if err = MergeCdbs(newFn(path), bucket...); err != nil {
 			return err
 		}
 	}
@@ -187,6 +199,10 @@ func MergeCdbs(newfn string, filenames ...string) error {
 		os.Remove(fn)
 	}
 	return nil
+}
+
+func newFn(path string) string {
+	return filepath.Join(path, fmt.Sprintf("%d.cdb", time.Now().UnixNano()))
 }
 
 type fileInfos []os.FileInfo
