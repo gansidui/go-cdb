@@ -205,9 +205,15 @@ func Make(w io.WriteSeeker, r io.Reader) (err error) {
 		rr.eatByte('>')
 		data := rr.readBytesN(dlen)
 		rr.eatByte('\n')
-		adder(Element{key, data})
+		if err = adder(Element{key, data}); err != nil {
+			break
+		}
 	}
-	closer()
+	if e := closer(); e != nil {
+		if err == nil {
+			err = e
+		}
+	}
 
 	return err
 }
@@ -335,6 +341,6 @@ func (cw *CdbWriter) Close() error {
 	if err != nil {
 		return err
 	}
-	cw.tempfh.Close()
+	_ = cw.tempfh.Close()
 	return os.Rename(cw.tempfn, cw.Filename)
 }
