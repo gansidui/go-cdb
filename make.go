@@ -41,8 +41,8 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element) error {
 	return nil
 }
 
-type adderFunc func(Element) error
-type closerFunc func() error
+type AdderFunc func(Element) error
+type CloserFunc func() error
 
 type posHolder struct {
 	pos uint32
@@ -50,7 +50,7 @@ type posHolder struct {
 
 //MakeFactory creates CDB and returns an adder function which should be called
 //with each Element, and a closer, which finalizes the CDB.
-func MakeFactory(w io.WriteSeeker) (adder adderFunc, closer closerFunc, err error) {
+func MakeFactory(w io.WriteSeeker) (adder AdderFunc, closer CloserFunc, err error) {
 	defer func() { // Centralize error handling.
 		if e := recover(); e != nil {
 			logger.Panicf("error: %s", e)
