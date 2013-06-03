@@ -1,18 +1,3 @@
-/*
-   Copyright 2013 Tamás Gulácsi
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
 package cdb
 
 import (
@@ -26,11 +11,14 @@ import (
 	"strconv"
 )
 
-const MaxCdbSize = 1 << 32 //maximum CDB size is 4Gb
+// MaxCdbSize is the maximum CDB size: 4Gb
+const MaxCdbSize = 1 << 32
 
+// BadFormatError is the "bad format" error
 var BadFormatError = errors.New("bad format")
 var logger = log.New(os.Stderr, "cdb ", log.LstdFlags|log.Lshortfile)
 
+// Element is the Key:Data pair
 type Element struct {
 	Key  []byte
 	Data []byte
@@ -56,7 +44,10 @@ func MakeFromChan(w io.WriteSeeker, c <-chan Element) error {
 	return nil
 }
 
+// AdderFunc is the element appender
 type AdderFunc func(Element) error
+
+// CloserFunc is the Close
 type CloserFunc func() error
 
 type posHolder struct {
@@ -309,6 +300,7 @@ func writeSlots(w io.Writer, slots []slot, buf []byte) (err error) {
 	return nil
 }
 
+// CdbWriter is the CDB writer
 type CdbWriter struct {
 	w        chan Element
 	e        chan error
@@ -317,6 +309,7 @@ type CdbWriter struct {
 	Filename string
 }
 
+//NewWriter returns a CdbWriter which writes to the given filename
 func NewWriter(cdb_fn string) (*CdbWriter, error) {
 	var cw CdbWriter
 	var err error
@@ -340,14 +333,18 @@ func NewWriter(cdb_fn string) (*CdbWriter, error) {
 	return &cw, nil
 }
 
+// PutPair puts a key, val pair to the writer
 func (cw *CdbWriter) PutPair(key []byte, val []byte) {
 	//logger.Printf("PutPair(%s)", key)
 	cw.w <- Element{key, val}
 }
+
+// Put puts an Element into the writer
 func (cw *CdbWriter) Put(elt Element) {
 	cw.w <- elt
 }
 
+// Close closes (finalizes) the writer
 func (cw *CdbWriter) Close() error {
 	//logger.Printf("closing %s", cw.w)
 	close(cw.w)

@@ -1,18 +1,3 @@
-/*
-   Copyright 2013 Tamás Gulácsi
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
 package multilevel
 
 import (
@@ -29,21 +14,22 @@ import (
 	"time"
 )
 
-const MaxCdbSize = 1 << 30 //1Gb
+// CdbSizeThreshold is 1Gb
+const CdbSizeThreshold = 1 << 30
 
-// type for the opened cdbs
+// Multi is a type for the opened cdbs
 type Multi struct {
 	channels [](chan Question)
 	mtx      sync.Mutex
 }
 
-// the key to query for and the channel to answer on
+// Question is the key to query for and the channel to answer on
 type Question struct {
 	Key    []byte
 	Answch chan Result
 }
 
-// an answer can be nice data or io.EOF if not found (or other error)
+// Result is an answer can be nice data or io.EOF if not found (or other error)
 type Result struct {
 	Data []byte
 	Err  error
@@ -51,6 +37,7 @@ type Result struct {
 
 var openedDirs = make(map[string]*Multi, 1)
 
+// Open opens the path
 func Open(path string) (*Multi, error) {
 	files, err := listDir(path, 0, isCdb)
 	if err != nil {
@@ -94,6 +81,7 @@ func startOracle(fn string) (chan Question, error) {
 	return askch, nil
 }
 
+// Close closes the Multi
 func (m *Multi) Close() {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
@@ -106,6 +94,7 @@ func (m *Multi) Close() {
 	m.channels = m.channels[:0]
 }
 
+// Data returns the data for the key
 func (m *Multi) Data(key []byte) ([]byte, error) {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
@@ -132,11 +121,13 @@ func isCdb(fi os.FileInfo) bool {
 	return strings.HasSuffix(fi.Name(), ".cdb")
 }
 
-// compacts path directory, if number of cdb files greater than threshold
+// Compact compacts path directory, if number of cdb files greater than threshold
 func Compact(path string, threshold int) error {
-	if locks, err := locking.FLockDirs(path); err != nil {
+    {
+	locks, err := locking.FLockDirs(path)
+    if err != nil {
 		return err
-	} else {
+	}
 		defer locks.Unlock()
 	}
 	files, err := listDir(path, 'S', isCdb)
@@ -150,7 +141,7 @@ func Compact(path string, threshold int) error {
 	bucket := make([]string, 0, 16)
 	for _, fi := range files {
 		fs := fi.Size()
-		if fs+size > MaxCdbSize {
+		if fs+size > CdbSizeThreshold {
 			if err = MergeCdbs(newFn(path), bucket...); err != nil {
 				return fmt.Errorf("error merging cdbs (%s): %s", strings.Join(bucket, ", "), err)
 			}
@@ -171,7 +162,7 @@ func Compact(path string, threshold int) error {
 	return err
 }
 
-// merges the cdbs, dumping filenames to newfn
+// MergeCdbs merges the cdbs, dumping filenames to newfn
 func MergeCdbs(newfn string, filenames ...string) error {
 	fh, err := os.Create(newfn)
 	if err != nil {

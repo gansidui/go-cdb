@@ -1,18 +1,3 @@
-/*
-   Copyright 2013 Tamás Gulácsi
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-     http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
 package cdb
 
 import (
@@ -47,7 +32,7 @@ func Dump(w io.Writer, r io.Reader) (err error) {
 	return err2
 }
 
-// calls work function for every element in the CDB
+// DumpMap calls work function for every element in the CDB
 // if the function returns error, then quits with that error
 func DumpMap(r io.Reader, work func(Element) error) error {
 	rb := bufio.NewReader(r)
@@ -72,7 +57,7 @@ func DumpMap(r io.Reader, work func(Element) error) error {
 	return nil
 }
 
-// dumps elements into the given channel, does not close it!
+// DumpToChan dumps elements into the given channel, does not close it!
 func DumpToChan(c chan<- Element, r io.Reader) error {
 	return DumpMap(r, func(elt Element) error { c <- elt; return nil })
 }
